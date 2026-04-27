@@ -198,6 +198,17 @@ static uint32_t pm4_type3_header(uint32_t opcode, uint32_t count)
          | ((PM4_SHADER_COMPUTE & 0x1) << 1);
 }
 
+static int pm4_build_write_data(void *buf, uint64_t dst_va, uint32_t value)
+{
+    uint32_t *pkt = (uint32_t *)buf;
+    pkt[0] = pm4_type3_header(PM4_OPCODE_WRITE_DATA, 4); // 4 body DWs
+    pkt[1] = (5u << 8) | (1u << 20);                     // dst_sel=MEM, wr_confirm=1
+    pkt[2] = (uint32_t)(dst_va & 0xFFFFFFFF);
+    pkt[3] = (uint32_t)(dst_va >> 32);
+    pkt[4] = value;
+    return 5 * (int)sizeof(uint32_t);
+}
+
 static int pm4_build_dma_data(void *buf, uint64_t dst_va, uint64_t src_va, uint32_t length)
 {
     uint32_t *pkt = (uint32_t *)buf;
@@ -283,6 +294,9 @@ static int gpu_transfer_physical(uint64_t phys_addr, void *local_buf,
 
     int cmd_size = pm4_build_dma_data((void *)s_gpu.cmd_va, dst, src, size);
 
+    uint32_t fence_val = ++s_gpu.fence_seq;
+    cmd_size += pm4_build_write_data((void *)(s_gpu.cmd_va + cmd_size), s_gpu.fence_va, fence_val);
+
     uint8_t desc[16];
     gpu_build_cmd_descriptor(desc, s_gpu.cmd_va, cmd_size);
 
@@ -296,8 +310,17 @@ static int gpu_transfer_physical(uint64_t phys_addr, void *local_buf,
     }
 
     // Wait for GPU DMA completion
-    // TODO: proper fence/signal wait
-    usleep(100000);
+    volatile uint32_t *fence = (volatile uint32_t *)s_gpu.fence_va;
+    for (int i = 0; i < 10000; i++)
+    {
+        if (*fence == fence_val) break;
+        usleep(1);
+    }
+
+    if (*fence != fence_val) {
+        print("[gpu] fence timeout (seq=%u got=%u) — falling back to 10ms sleep\n", fence_val, *fence);
+        usleep(10000);
+    }
 
     if (!is_write) {
         memcpy(local_buf, (void *)s_gpu.transfer_va, size);
@@ -398,6 +421,10 @@ int gpu_init(void)
 
     int prot_rw = prot_ro | PROT_GPU_WRITE;
     mprotect((void *)s_gpu.victim_va, s_gpu.dmem_size, prot_rw);
+
+    s_gpu.fence_va  = s_gpu.cmd_va + 0x800;
+    s_gpu.fence_seq = 0;
+    *(volatile uint32_t *)s_gpu.fence_va = 0;
 
     s_gpu.initialized = 1;
     print("[gpu] ready\n");

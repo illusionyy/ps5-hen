@@ -18,6 +18,7 @@
 #define PM4_SHADER_COMPUTE          1
 #define PM4_OPCODE_DMA_DATA         0x50
 #define PM4_OPCODE_INDIRECT_BUF     0x3F
+#define PM4_OPCODE_WRITE_DATA       0x37
 
 struct gpu_kernel_offsets {
     uint64_t proc_vmspace;          // proc->p_vmspace offset
@@ -42,6 +43,9 @@ struct gpu_ctx {
     uint64_t cleared_ptbe;          // GPU PTE with physical address cleared (template)
     uint64_t page_size;             // GPU page size for victim allocation (should be 2MB)
     uint64_t dmem_size;             // allocation size (2MB)
+
+    uint64_t fence_va;              // CPU/GPU VA of 4-byte fence word (in cmd_va + 0x800)
+    uint32_t fence_seq;             // incrementing sequence number written by GPU on completion
 };
 
 void gpu_set_offsets(struct gpu_kernel_offsets *offsets);

