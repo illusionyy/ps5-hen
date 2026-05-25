@@ -12,6 +12,7 @@
 extern "C" int cpuset(cpusetid_t *);
 
 #include "hv_defeat.h"
+#include "hv_defeat_0506.h"
 #include "util.h"
 #include "gpu_dma.h"
 #include "iommu.h"
@@ -498,6 +499,32 @@ int stage7_run_hen(hv_defeat_ctx *ctx) {
 }
 
 int run_hv_defeat(void) {
+    uint32_t fw_ver = kernel_get_fw_version();
+    uint32_t fw = (fw_ver >> 16) & 0xFFFF;
+    uint32_t fw_major = (fw_ver & 0xFF000000) >> 24;
+    uint32_t fw_minor = (fw_ver & 0x00FF0000) >> 16;
+
+    print("\n[hv_defeat] firmware 0x%04x\n", fw);
+
+    // Use new HV defeat for firmware 5.00-6.02
+    if (fw >= 0x0500 && fw <= 0x0602) {
+        print("[hv_defeat] using new method for FW 5.00-6.02\n");
+        int r = hv_defeat_0506();
+        if (r) {
+            print("[hv_defeat] hv_defeat_0506 failed: %d\n", r);
+            return r;
+        }
+
+        char notify_msg[128];
+        snprintf(notify_msg, sizeof(notify_msg),
+                 "Welcome To PS5HEN 1.3\nPlayStation 5 FW: %d.%02X\nBy SpecterDev, f0f, flat_z",
+                 fw_major, fw_minor);
+
+        notify(notify_msg);
+        return 0;
+    }
+
+    // Use old HV defeat for firmware 4.51 and below
     hv_defeat_ctx ctx;
     memset(&ctx, 0, sizeof(ctx));
 
@@ -537,7 +564,7 @@ int run_hv_defeat(void) {
     if ((r = stage2_find_vmcbs(&ctx))) return r;
 
     if ((r = stage3_patch_vmcbs(&ctx, &iommu))) return r;
-   
+
     if ((r = stage3b_remove_xotext(&ctx))) return r;
 
     {
@@ -575,10 +602,6 @@ int run_hv_defeat(void) {
     //clear_smap_smep_nda(&ctx);
 
     stage7_run_hen(&ctx);
-
-    uint32_t fw_ver = kernel_get_fw_version();
-    uint32_t fw_major = (fw_ver & 0xFF000000) >> 24;
-    uint32_t fw_minor = (fw_ver & 0x00FF0000) >> 16;
 
     char notify_msg[128];
     snprintf(notify_msg, sizeof(notify_msg),

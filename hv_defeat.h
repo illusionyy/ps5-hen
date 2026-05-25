@@ -82,3 +82,6 @@ int stage7_run_hen(hv_defeat_ctx *ctx, struct iommu_ctx *iommu);
 int kexec(uint64_t fptr);
 int run_hv_defeat(void);
 int kernel_pmap_invalidate_all(void);
+
+// For firmware 5.00-6.02
+int hv_defeat_0506(void);

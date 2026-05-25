@@ -14,7 +14,7 @@ CFLAGS := -std=c++2b -Wall -Werror -g -DHEN_BIN_PATH="\"$(HEN_BIN)\""
 
 all: $(HEN_BIN) $(ELF)
 
-SRCS := main.cpp hv_defeat.cpp gpu_dma.cpp hen.S
+SRCS := main.cpp hv_defeat.cpp hv_defeat_0506.cpp gpu_dma.cpp hen.S
 
 $(HEN_BIN):
 	$(MAKE) -C hen
