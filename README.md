@@ -1,7 +1,7 @@
 # ps5-hen
 
 ### Homebrew Enabler for the PlayStation 5.
-Defeats the Hypervisor on firmware <= 4.51 and enables supports for homebrew and ps4 fpkg's.
+Defeats the Hypervisor on firmware <= 6.02 and enables supports for homebrew and ps4 fpkg's.
 
 Supports firmwares: 
 - 1.xx - `1.00` `1.01` `1.02` `1.05` `1.10` `1.11` `1.12` `1.13` `1.14`
@@ -14,15 +14,13 @@ Supports firmwares:
   
 - 5.xx - `5.00` `5.02` `5.50`
 
-- 6.02 - `6.00` `6.02`
+- 6.xx - `6.00` `6.02`
 
 ## Download
-
-[![Download](https://img.shields.io/badge/Download-ps5--hen.elf-blue?style=for-the-badge)](https://github.com/cragson/ps5-hen/releases/download/dev-latest/ps5-hen.elf)
+WIP
 
 ## How can I use this?
 - Download the payload from button above
-    - its automatically the latest dev build
 - Start elfldr by running UMTX or Y2JB
 - Close application
     - Y2JB, UMTX etc. to allow pinning to all cores
