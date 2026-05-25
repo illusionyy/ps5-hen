@@ -11,6 +11,10 @@ Supports firmwares:
 - 3.xx - `3.00` `3.10` `3.20` `3.21`
 
 - 4.xx - `4.00` `4.02` `4.03` `4.50` `4.51`
+  
+- 5.xx - `5.00` `5.02` `5.50`
+
+- 6.02 - `6.00` `6.02`
 
 ## Download
 
@@ -54,7 +58,7 @@ Supports firmwares:
 
 Thanks to every single one of you - without your help it wouldn't be possible.
 
-## How It Works
+## How It Works (<= 4.51)
 
 | Stage | Name | Description |
 |-------|------|-------------|
@@ -68,6 +72,8 @@ Thanks to every single one of you - without your help it wouldn't be possible.
 | 6 | Kexec Install | Install kernel execution primitive |
 | 7 | HEN Payload | Load HEN kernel module for homebrew/ps4 fpkg support |
 
+## How It Works (5.xx to 6.02)
+WIP
 
 ## Building
 
